@@ -2,9 +2,13 @@
 #include <X11/Xlib.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include <string.h>
 
+int gen_suitable_random(int max, int limiter) {
+    return rand() % (max - limiter);
+}
 
 int handle_error(Display *dsp, XErrorEvent *err) {
     puts("Encountered Error!");
@@ -55,6 +59,7 @@ Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
 }
 
 int main() {
+    srand(time(NULL));
     XWindowAttributes attrs;
     Window wndws[MAX_WINS] = {0};
     Window frams[MAX_WINS] = {0};
@@ -62,6 +67,14 @@ int main() {
     // initialize display and root window
     Display *dsp = XOpenDisplay(0);
     Window root = DefaultRootWindow(dsp);
+
+    int dispW, dispH, dispX, dispY, dispBW, dispZ;
+    XGetGeometry(dsp, root, &root,
+            &dispX, &dispY,
+            &dispW, &dispH,
+            &dispBW, &dispZ);
+    printf("Display dimensions: %dx%d\n", dispW, dispH);
+
     XSelectInput(dsp, root,
             SubstructureRedirectMask | SubstructureNotifyMask |
             PropertyChangeMask | 0);
@@ -121,6 +134,8 @@ int main() {
             // map window with frame and add to list
             XGetWindowAttributes(dsp, e.xmaprequest.window,
                     &attrs);
+            attrs.x = gen_suitable_random(dispW, attrs.width);
+            attrs.y = gen_suitable_random(dispH, attrs.height);
 
             Window frame = add_frame_to_window(dsp, root, e.xmaprequest.window, attrs, font);
 
