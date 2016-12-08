@@ -1,9 +1,9 @@
 all:
-	gcc -lX11 simple.c -o simplewm
+	gcc -lX11 armw.c -o Armw
 
 run:
 	Xephyr :1 -ac -screen 800x600 &
 	sleep 1
-	DISPLAY=:1 ./simplewm &
+	DISPLAY=:1 ./Armw &
 	DISPLAY=:1 urxvt &
 
