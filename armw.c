@@ -3,27 +3,36 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 #include <time.h>
 #include <string.h>
+#include <unistd.h>
 
 int gen_suitable_random(int max, int limiter) {
     return rand() % (max - limiter);
 }
 
 int handle_error(Display *dsp, XErrorEvent *err) {
+    char err_text[1024];
+    XGetErrorText(dsp, err->error_code, err_text, sizeof(err_text));
     puts("Encountered Error!");
+    printf("Request:     %d\nError code:  %d\nError text:  %s\nResource ID: %d\n",
+            err->request_code, err->error_code, err_text, err->resourceid);
     return 0;
 }
 
 void draw_title_on_frame(Display *dsp, Window frame, XFontStruct *font,
-        char *title, int descent, int height) {
+        char *title, int ascent, int descent) {
+    XWindowAttributes frAttrs;
+    XGetWindowAttributes(dsp, frame, &frAttrs);
     GC gc = XCreateGC(dsp, frame, 0, 0);
 
     XSetBackground(dsp, gc, 0x181818);
     XSetForeground(dsp, gc, 0x7cafc2);
     XSetFont(dsp, gc, font->fid);
 
-    XDrawString(dsp, frame, gc, 2, height - descent, title, strlen(title));
+    XClearArea(dsp, frame, 0, frAttrs.height - ascent - descent, frAttrs.width, ascent + descent, true);
+    XDrawString(dsp, frame, gc, 2, frAttrs.height - descent, title, strlen(title));
     printf("Title: %s\n", title);
 }
 
@@ -36,24 +45,41 @@ int find_window_in_array(Window *winarray, Window query) {
     return -1;
 }
 
+bool array_has_blank(Window *winarray) {
+    for (int i = 0; i < MAX_WINS; i++) {
+        if (winarray[i] == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
         XWindowAttributes attrs, XFontStruct *font) {
+    puts("Adding frame to window");
     int ascent, descent, direction;
     XCharStruct overall;
     char *title;
+    puts("Getting name of window");
     XFetchName(dsp, toFrame, &title);
+    if (title == NULL) {
+        title = "Testing!";
+    }
+    puts("Calculating text dimensions");
     XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
+    puts("Calculated text dimensions");
     Window frame = XCreateSimpleWindow(
             dsp, root, attrs.x, attrs.y,
             attrs.width, attrs.height + (ascent + descent), 2, 0x7cafc2, 0x181818);
+    puts("Created frame window");
 
     XReparentWindow(dsp, toFrame, frame, 0, 0);
     XSelectInput(dsp, frame,
             SubstructureRedirectMask | SubstructureNotifyMask
-            | PropertyChangeMask | EnterWindowMask | ExposureMask);
+            | PropertyChangeMask | EnterWindowMask | ExposureMask | FocusChangeMask);
     XMapWindow(dsp, frame);
     XMapWindow(dsp, toFrame);
-    draw_title_on_frame(dsp, frame, font, title, descent, attrs.height + ascent + descent);
+    draw_title_on_frame(dsp, frame, font, title, ascent, descent);
     XStoreName(dsp, frame, title);
     return frame;
 }
@@ -86,6 +112,7 @@ int main() {
     const int K_k     = XKeysymToKeycode(dsp, 'k');
     const int K_l     = XKeysymToKeycode(dsp, 'l');
     const int K_r     = XKeysymToKeycode(dsp, 'r');
+    const int K_q     = XKeysymToKeycode(dsp, 'q');
 
     // add error handler and send request to server
     XSetErrorHandler(&handle_error);
@@ -123,21 +150,74 @@ int main() {
             ButtonPressMask, GrabModeAsync,
             GrabModeAsync, None, None);
 
+    // grab mod+q for closing windows
+    XGrabKey(dsp, K_q,
+            Mod1Mask, root, true,
+            GrabModeAsync, GrabModeAsync);
+
     Window subw = None;
     int kcnt = 2;
     bool resizing = false;
-    time_t ltime = time(NULL);
-    for (XEvent e;; XNextEvent(dsp, &e)) {
-        printf("Recv: event, type: %d\n", e.type);
+    unsigned long ltime = time(NULL);
+
+    XEvent e;
+    while (true) {
+        if (XPending(dsp) > 0) {
+            XNextEvent(dsp, &e);
+        } else {
+            for (int i = 0; i < MAX_WINS; i++) {
+                Window wndw = wndws[i];
+                if (wndw != 0) {
+                    int ascent, descent, direction;
+                    XCharStruct overall;
+                    char *title;
+                    XFetchName(dsp, wndw, &title);
+                    if (title == NULL) {
+                        title = "Testing!";
+                    }
+                    XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
+                    XGetWindowAttributes(dsp, frams[i],
+                            &attrs);
+                    draw_title_on_frame(dsp, frams[i],
+                            font, title, ascent, descent);
+                }
+            }
+            struct timespec tosleep;
+            tosleep.tv_sec = 0;
+            tosleep.tv_nsec = 10000000;
+            struct timespec remsleep;
+            nanosleep(&tosleep, &remsleep);
+            continue;
+        }
+
+        printf("Recv: event, type: %d \n", e.type);
 
         if (e.type == MapRequest) {
             // map window with frame and add to list
+
+            puts("Attempting to map window");
+            if (!array_has_blank(wndws)) {
+                printf("Cannot map window: %d, destroying!\n", e.xmaprequest.window);
+                XDestroyWindow(dsp, e.xmaprequest.window);
+
+                continue;
+            }
             XGetWindowAttributes(dsp, e.xmaprequest.window,
                     &attrs);
+            puts("Got attributes");
+            printf("%dx%d\n", attrs.width, attrs.height);
+            if (attrs.width == dispW) {
+                attrs.width -= 10;
+            }
+            if (attrs.height == dispH) {
+                attrs.height -= 10;
+            }
             attrs.x = gen_suitable_random(dispW, attrs.width);
             attrs.y = gen_suitable_random(dispH, attrs.height);
+            puts("Generated suitable position");
 
             Window frame = add_frame_to_window(dsp, root, e.xmaprequest.window, attrs, font);
+            puts("Added frame to window");
 
             printf("Mapping window: %d/frame: %d\n", e.xmaprequest.window, frame);
             for (int i = 0; i < MAX_WINS; i++) {
@@ -149,18 +229,43 @@ int main() {
             }
         } else if (e.type == Expose) {
             // redraw frame elements if window was overlapped
-            if (e.xexpose.window != root) {
+            /* if (e.xexpose.window != root) {
                 int ascent, descent, direction;
                 XCharStruct overall;
                 char *title;
-                XFetchName(dsp, e.xexpose.window, &title);
+                int fsch;
+                if (find_window_in_array(wndws, e.xproperty.window) == -1) {
+                    fsch = find_window_in_array(frams, e.xproperty.window);
+                }
+                Window wndw = wndws[fsch];
+
+                XFetchName(dsp, wndw, &title);
                 //title = "meems";
                 XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
                 XGetWindowAttributes(dsp, e.xexpose.window,
                         &attrs);
                 draw_title_on_frame(dsp, e.xexpose.window,
-                        font, title, descent, attrs.height);
+                        font, title, ascent, descent);
+            } */
+        } else if (e.type == PropertyNotify) {
+            /*
+            XGetWindowAttributes(dsp, e.xproperty.window,
+                    &attrs);
+            puts("PropertyChange!");
+            int fsch;
+            if (find_window_in_array(wndws, e.xproperty.window) == -1) {
+                fsch = find_window_in_array(frams, e.xproperty.window);
             }
+            Window wndw = wndws[fsch];
+            printf("window: %d\n", wndw);
+            int ascent, descent, direction;
+            XCharStruct overall;
+            char *title;
+            XFetchName(dsp, wndw, &title);
+            XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
+            draw_title_on_frame(dsp, e.xexpose.window,
+                    font, title, ascent, descent);
+            */
         } else if (e.type == DestroyNotify) {
             // destroy empty frames and remove window from list
             for (int i = 0; i < MAX_WINS; i++) {
@@ -176,18 +281,26 @@ int main() {
             }
         } else if (e.type == EnterNotify) {
             // change focus based on location of mouse
+            int fsch = find_window_in_array(frams, e.xcrossing.window);
+            if (fsch != -1) {
+                e.xcrossing.subwindow = wndws[fsch];
+            }
+
             printf("Entered window: %d\n", e.xcrossing.subwindow);
             XGetWindowAttributes(dsp, e.xcrossing.subwindow,
                     &attrs);
             subw = e.xcrossing.window;
+            XSetInputFocus(dsp, e.xcrossing.subwindow, RevertToNone, CurrentTime);
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         } else if (e.type == KeyPress && subw != None) {
             // handle various keyboard actions
             XGetWindowAttributes(dsp, subw, &attrs);
 
-            if (difftime(time(NULL), ltime) < 0.25) kcnt++;
-            else kcnt = 2;
+            if (time(NULL) - ltime < 2) { kcnt++; }
+            else { kcnt = 2; }
+
+            ltime = time(NULL);
 
             Window wndw;
             Window fram;
@@ -208,6 +321,7 @@ int main() {
             XWindowAttributes framAttrs;
             XGetWindowAttributes(dsp, wndw, &wndwAttrs);
             XGetWindowAttributes(dsp, fram, &framAttrs);
+            printf("kcnt: %d\n", kcnt);
 
             int Kp = e.xkey.keycode;
             if (Kp == K_opabe)
@@ -266,6 +380,10 @@ int main() {
                             attrs.width, attrs.height);
             else if (Kp == K_r)
                 resizing = !resizing;
+            else if (Kp == K_q) {
+                XKillClient(dsp, wndw);
+                XKillClient(dsp, fram);
+            }
 
         } else if (e.type == ButtonPress &&
                 e.xbutton.subwindow != None) {
@@ -276,7 +394,6 @@ int main() {
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         }
-        ltime = time(NULL);
     }
     return 0;
 }
