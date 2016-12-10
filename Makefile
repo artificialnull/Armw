@@ -4,6 +4,6 @@ all:
 run:
 	Xephyr :1 -ac -screen 800x600 &
 	sleep 1
-	DISPLAY=:1 ./Armw &
 	DISPLAY=:1 urxvt &
+	DISPLAY=:1 ./Armw
 

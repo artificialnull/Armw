@@ -54,19 +54,30 @@ bool array_has_blank(Window *winarray) {
     return false;
 }
 
+char *get_title_of_window(Display *dsp, Window titled, char *ttl,
+        int *asc, int *desc, XFontStruct *font) {
+    int direction, ascent, descent;
+    XCharStruct overall;
+
+    XFetchName(dsp, titled, &ttl);
+    if (ttl == NULL) {
+        ttl = "Testing!";
+    }
+
+    XTextExtents(font, ttl, strlen(ttl), &direction, &ascent, &descent, &overall);
+    *asc = ascent;
+    *desc = descent;
+    return ttl;
+}
+
+
 Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
         XWindowAttributes attrs, XFontStruct *font) {
     puts("Adding frame to window");
-    int ascent, descent, direction;
-    XCharStruct overall;
+    int ascent, descent;
     char *title;
     puts("Getting name of window");
-    XFetchName(dsp, toFrame, &title);
-    if (title == NULL) {
-        title = "Testing!";
-    }
-    puts("Calculating text dimensions");
-    XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
+    get_title_of_window(dsp, toFrame, title, &ascent, &descent, font);
     puts("Calculated text dimensions");
     Window frame = XCreateSimpleWindow(
             dsp, root, attrs.x, attrs.y,
@@ -76,10 +87,10 @@ Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
     XReparentWindow(dsp, toFrame, frame, 0, 0);
     XSelectInput(dsp, frame,
             SubstructureRedirectMask | SubstructureNotifyMask
-            | PropertyChangeMask | EnterWindowMask | ExposureMask | FocusChangeMask);
+            | PropertyChangeMask | EnterWindowMask | FocusChangeMask);
     XMapWindow(dsp, frame);
     XMapWindow(dsp, toFrame);
-    draw_title_on_frame(dsp, frame, font, title, ascent, descent);
+
     XStoreName(dsp, frame, title);
     return frame;
 }
@@ -163,6 +174,7 @@ int main() {
     int kcnt = 2;
     bool resizing = false;
     unsigned long ltime = time(NULL);
+    int count = 0;
 
     XEvent e;
     while (true) {
@@ -172,25 +184,25 @@ int main() {
             for (int i = 0; i < MAX_WINS; i++) {
                 Window wndw = wndws[i];
                 if (wndw != 0) {
-                    int ascent, descent, direction;
-                    XCharStruct overall;
+                    int ascent, descent;
                     char *title;
-                    XFetchName(dsp, wndw, &title);
-                    if (title == NULL) {
-                        title = "Testing!";
-                    }
-                    XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
+                    title = get_title_of_window(dsp, wndw, title, &ascent, &descent, font);
+                    assert(title != NULL);
                     XGetWindowAttributes(dsp, frams[i],
                             &attrs);
                     draw_title_on_frame(dsp, frams[i],
                             font, title, ascent, descent);
                 }
             }
-            struct timespec tosleep;
-            tosleep.tv_sec = 0;
-            tosleep.tv_nsec = 10000000;
-            struct timespec remsleep;
-            nanosleep(&tosleep, &remsleep);
+            while (XPending(dsp) == 0 && count < 40) {
+                struct timespec tosleep;
+                tosleep.tv_sec = 0;
+                tosleep.tv_nsec = 25000000;
+                struct timespec remsleep;
+                nanosleep(&tosleep, &remsleep);
+                count++;
+            }
+            count = 0;
             continue;
         }
 
