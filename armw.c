@@ -105,6 +105,10 @@ int main() {
             SubstructureRedirectMask | SubstructureNotifyMask |
             PropertyChangeMask | 0);
 
+
+    Atom WM_PROTOCOLS     = XInternAtom(dsp, "WM_PROTOCOLS",     false);
+    Atom WM_DELETE_WINDOW = XInternAtom(dsp, "WM_DELETE_WINDOW", false);
+
     // compute keycodes for necessary keys
     const int K_opabe = XKeysymToKeycode(dsp, ' ');
     const int K_h     = XKeysymToKeycode(dsp, 'h');
@@ -381,8 +385,33 @@ int main() {
             else if (Kp == K_r)
                 resizing = !resizing;
             else if (Kp == K_q) {
-                XKillClient(dsp, wndw);
-                XKillClient(dsp, fram);
+                Atom *supported;
+                int num_supported;
+                XGetWMProtocols(dsp, wndw, &supported, &num_supported);
+                bool found = false;
+                for (int i = 0; i < num_supported; i++) {
+                    if (supported[i] == WM_DELETE_WINDOW) {
+                        printf("%d\n", supported[i]);
+                        found = true;
+                        puts("WM_DELETE_WINDOW present!");
+                        break;
+                    }
+                }
+                if (found) {
+                    printf("Sending killMsg to window: %d\n", wndw);
+                    XEvent killMsg;
+                    killMsg.xclient.type = ClientMessage;
+                    killMsg.xclient.message_type = WM_PROTOCOLS;
+                    killMsg.xclient.window = wndw;
+                    killMsg.xclient.format = 32;
+                    killMsg.xclient.data.l[0] = WM_DELETE_WINDOW;
+                    XSendEvent(dsp, wndw, false, 0, &killMsg);
+                } else {
+                    printf("Killing window: %d\n", wndw);
+                    XKillClient(dsp, wndw);
+                    printf("Killing frame: %d\n", fram);
+                    XKillClient(dsp, fram);
+                }
             }
 
         } else if (e.type == ButtonPress &&
