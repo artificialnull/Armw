@@ -1,6 +1,7 @@
 #define MAX_WINS 32
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/Xatom.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,10 +13,6 @@
 typedef struct {
     Window wndw;
     Window fram;
-    int x;
-    int y;
-    int w;
-    int h;
 } Viewable;
 
 
@@ -54,7 +51,7 @@ void draw_title_on_frame(Display *dsp, Window frame, XFontStruct *font,
 
     XClearArea(dsp, frame, 0, frAttrs.height - ascent - descent, frAttrs.width, ascent + descent, true);
     XDrawString(dsp, frame, gc, 2, frAttrs.height - descent, title, strlen(title));
-    printf("Title: %s\n", title);
+//    printf("Title: %s\n", title);
 }
 
 int find_window_in_array(Window *winarray, Window query) {
@@ -64,15 +61,6 @@ int find_window_in_array(Window *winarray, Window query) {
         }
     }
     return -1;
-}
-
-bool array_has_blank(Window *winarray) {
-    for (int i = 0; i < MAX_WINS; i++) {
-        if (winarray[i] == 0) {
-            return true;
-        }
-    }
-    return false;
 }
 
 char *get_title_of_window(Display *dsp, Window titled, char *ttl,
@@ -99,16 +87,12 @@ char *get_title_of_window(Display *dsp, Window titled, char *ttl,
 
 Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
         XWindowAttributes attrs, XFontStruct *font) {
-    puts("Adding frame to window");
     int ascent, descent;
     char *title;
-    puts("Getting name of window");
     get_title_of_window(dsp, toFrame, title, &ascent, &descent, font);
-    puts("Calculated text dimensions");
     Window frame = XCreateSimpleWindow(
             dsp, root, attrs.x, attrs.y,
             attrs.width, attrs.height + (ascent + descent), 2, 0x7cafc2, 0x181818);
-    puts("Created frame window");
 
     XReparentWindow(dsp, toFrame, frame, 0, 0);
     XSelectInput(dsp, frame,
@@ -124,8 +108,11 @@ Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
 int main() {
     srand(time(NULL));
     XWindowAttributes attrs;
-    Window wndws[MAX_WINS] = {0};
-    Window frams[MAX_WINS] = {0};
+    Viewable vwbls[MAX_WINS];
+    for (int i = 0; i < MAX_WINS; i++) {
+        vwbls[i].wndw = 0;
+        vwbls[i].fram = 0;
+    }
 
     // initialize display and root window
     Display *dsp = XOpenDisplay(0);
@@ -143,8 +130,14 @@ int main() {
             PropertyChangeMask | 0);
 
 
-    Atom WM_PROTOCOLS     = XInternAtom(dsp, "WM_PROTOCOLS",     false);
+    Atom WM_PROTOCOLS     = XInternAtom(dsp, "WM_PROTOCOLS", false);
     Atom WM_DELETE_WINDOW = XInternAtom(dsp, "WM_DELETE_WINDOW", false);
+    Atom WM_SUPP_CHECK    = XInternAtom(dsp, "_NET_SUPPORTING_WM_CHECK", false);
+    Atom WM_NAME          = XInternAtom(dsp, "_NET_WM_NAME", false);
+    Atom UTF8_STR         = XInternAtom(dsp, "UTF8_STRING", false);
+
+    XChangeProperty(dsp, root, WM_SUPP_CHECK, XA_WINDOW, 32, PropModeReplace, (unsigned char *)&root,  1);
+    XChangeProperty(dsp, root, WM_NAME,       UTF8_STR,  8,  PropModeReplace, (unsigned char *)"Armw", 5);
 
     // compute keycodes for necessary keys
     const int K_opabe = XKeysymToKeycode(dsp, ' ');
@@ -155,6 +148,7 @@ int main() {
     const int K_r     = XKeysymToKeycode(dsp, 'r');
     const int K_q     = XKeysymToKeycode(dsp, 'q');
     const int K_d     = XKeysymToKeycode(dsp, 'd');
+    const int K_e     = XKeysymToKeycode(dsp, 'e');
 
     // add error handler and send request to server
     XSetErrorHandler(&handle_error);
@@ -192,9 +186,14 @@ int main() {
             ButtonPressMask, GrabModeAsync,
             GrabModeAsync, None, None);
 
-    // grab mod+q for closing windows
+    // grab mod+shift+q for closing windows
     XGrabKey(dsp, K_q,
-            Mod1Mask, root, true,
+            Mod1Mask | ShiftMask, root, true,
+            GrabModeAsync, GrabModeAsync);
+
+    // mod+shift+e for closing wm
+    XGrabKey(dsp, K_e,
+            Mod1Mask | ShiftMask, root, true,
             GrabModeAsync, GrabModeAsync);
 
     // grad mod+d for dmenu
@@ -202,7 +201,7 @@ int main() {
             Mod1Mask, root, true,
             GrabModeAsync, GrabModeAsync);
 
-    Window subw = None;
+    Viewable subw;
     int kcnt = 2;
     bool resizing = false;
     unsigned long ltime = time(NULL);
@@ -213,18 +212,18 @@ int main() {
         if (XPending(dsp) > 0) {
             XNextEvent(dsp, &e);
         } else {
-            puts("No events, titling windows in spare time");
+//            puts("No events, titling windows in spare time");
             bool didAnything = false;
             for (int i = 0; i < MAX_WINS; i++) {
-                Window wndw = wndws[i];
-                if (wndw != 0) {
+                Viewable vwbl = vwbls[i];
+                if (vwbl.wndw != 0) {
                     int ascent, descent;
                     char *title;
-                    title = get_title_of_window(dsp, wndw, title, &ascent, &descent, font);
+                    title = get_title_of_window(dsp, vwbl.wndw, title, &ascent, &descent, font);
                     assert(title != NULL);
-                    XGetWindowAttributes(dsp, frams[i],
+                    XGetWindowAttributes(dsp, vwbl.fram,
                             &attrs);
-                    draw_title_on_frame(dsp, frams[i],
+                    draw_title_on_frame(dsp, vwbl.fram,
                             font, title, ascent, descent);
                     didAnything = true;
                 }
@@ -247,7 +246,14 @@ int main() {
             // map window with frame and add to list
 
             puts("Attempting to map window");
-            if (!array_has_blank(wndws)) {
+            bool foundBlank = false;
+            for (int i = 0; i < MAX_WINS; i++) {
+                if (vwbls[i].wndw == 0) {
+                    foundBlank = true;
+                    break;
+                }
+            }
+            if (!foundBlank) {
                 printf("Cannot map window: %d, destroying!\n", e.xmaprequest.window);
                 XDestroyWindow(dsp, e.xmaprequest.window);
 
@@ -255,8 +261,6 @@ int main() {
             }
             XGetWindowAttributes(dsp, e.xmaprequest.window,
                     &attrs);
-            puts("Got attributes");
-            printf("%dx%d\n", attrs.width, attrs.height);
             if (attrs.width == dispW) {
                 attrs.width -= 10;
             }
@@ -265,16 +269,17 @@ int main() {
             }
             attrs.x = gen_suitable_random(dispW, attrs.width);
             attrs.y = gen_suitable_random(dispH, attrs.height);
-            puts("Generated suitable position");
+            printf("%dx%d\n", attrs.width, attrs.height);
 
+            puts("Adding frame to window...");
             Window frame = add_frame_to_window(dsp, root, e.xmaprequest.window, attrs, font);
             puts("Added frame to window");
 
             printf("Mapping window: %d/frame: %d\n", e.xmaprequest.window, frame);
             for (int i = 0; i < MAX_WINS; i++) {
-                if (wndws[i] == 0) {
-                    wndws[i] = e.xmaprequest.window;
-                    frams[i] = frame;
+                if (vwbls[i].wndw == 0) {
+                    vwbls[i].wndw = e.xmaprequest.window;
+                    vwbls[i].fram = frame;
                     break;
                 }
             }
@@ -320,63 +325,59 @@ int main() {
         } else if (e.type == DestroyNotify) {
             // destroy empty frames and remove window from list
             for (int i = 0; i < MAX_WINS; i++) {
-                if (wndws[i] == e.xdestroywindow.window) {
-                    printf("Destroyed window: %d -> frame: %d\n", e.xdestroywindow.window,
-                            e.xdestroywindow.event);
-                    XUnmapWindow(dsp, e.xdestroywindow.event);
-                    XReparentWindow(dsp, e.xdestroywindow.window, root, 0, 0);
-                    XDestroyWindow(dsp, e.xdestroywindow.event);
-                    wndws[i] = 0;
+                if (vwbls[i].wndw == e.xdestroywindow.window) {
+                    printf("Destroyed window: %d -> frame: %d\n", vwbls[i].wndw,
+                            vwbls[i].fram);
+                    XUnmapWindow(dsp, vwbls[i].fram);
+                    XReparentWindow(dsp, vwbls[i].wndw, root, 0, 0);
+                    XDestroyWindow(dsp, vwbls[i].fram);
+                    vwbls[i].wndw = 0;
+                    vwbls[i].wndw = 0;
                     break;
                 }
             }
         } else if (e.type == EnterNotify) {
             // change focus based on location of mouse
-            int fsch = find_window_in_array(frams, e.xcrossing.window);
-            if (fsch != -1) {
-                e.xcrossing.subwindow = wndws[fsch];
+            for (int i = 0; i < MAX_WINS; i++) {
+                if (vwbls[i].wndw == e.xcrossing.subwindow ||
+                        vwbls[i].fram == e.xcrossing.window) {
+                    e.xcrossing.subwindow = vwbls[i].wndw;
+                    subw.wndw = vwbls[i].wndw;
+                    subw.fram = vwbls[i].fram;
+                    break;
+                }
             }
 
-            printf("Entered window: %d\n", e.xcrossing.subwindow);
-            XGetWindowAttributes(dsp, e.xcrossing.subwindow,
+            printf("Entered window: %d\n", subw.wndw);
+            XGetWindowAttributes(dsp, subw.wndw,
                     &attrs);
-            subw = e.xcrossing.window;
-            XSetInputFocus(dsp, e.xcrossing.subwindow, RevertToPointerRoot, CurrentTime);
+            XSetInputFocus(dsp, subw.wndw, RevertToPointerRoot, CurrentTime);
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
-        } else if (e.type == KeyPress && subw != None) {
+        } else if (e.type == KeyPress && e.xkey.keycode == K_e) {
+            puts("Gonna go die now, seeya!");
+            exit(0);
+        } else if (e.type == KeyPress && subw.wndw != None) {
             // handle various keyboard actions
-            XGetWindowAttributes(dsp, subw, &attrs);
+            XGetWindowAttributes(dsp, subw.wndw, &attrs);
 
             if (time(NULL) - ltime < 2) { kcnt++; }
             else { kcnt = 2; }
 
             ltime = time(NULL);
 
-            Window wndw;
-            Window fram;
-            int wsch = find_window_in_array(wndws, subw);
-            int fsch = find_window_in_array(frams, subw);
-            printf("wsch: %d/fsch: %d\n", wsch, fsch);
-            if (wsch != -1) {
-                wndw = wndws[wsch];
-                fram = frams[wsch];
-            } else if (fsch != -1) {
-                fram = frams[fsch];
-                wndw = wndws[fsch];
-            } else {
-                puts("BAD THINGS ARE HAPPENING!");
-            }
+            Window wndw = subw.wndw;
+            Window fram = subw.fram;
+
             printf("Got keypress from window: %d/frame: %d\n", wndw, fram);
             XWindowAttributes wndwAttrs;
             XWindowAttributes framAttrs;
             XGetWindowAttributes(dsp, wndw, &wndwAttrs);
             XGetWindowAttributes(dsp, fram, &framAttrs);
-            printf("kcnt: %d\n", kcnt);
 
             int Kp = e.xkey.keycode;
             if (Kp == K_opabe)
-                XRaiseWindow(dsp, subw);
+                XRaiseWindow(dsp, subw.wndw);
             else if (Kp == K_h)
                 if (resizing) {
                     XMoveResizeWindow(dsp, wndw,
@@ -387,9 +388,9 @@ int main() {
                             framAttrs.width - kcnt, framAttrs.height);
                 }
                 else
-                    XMoveResizeWindow(dsp, subw,
-                            attrs.x - kcnt, attrs.y,
-                            attrs.width, attrs.height);
+                    XMoveResizeWindow(dsp, subw.fram,
+                            framAttrs.x - kcnt, framAttrs.y,
+                            framAttrs.width, framAttrs.height);
             else if (Kp == K_j)
                 if (resizing) {
                     XMoveResizeWindow(dsp, wndw,
@@ -400,9 +401,9 @@ int main() {
                             framAttrs.width, framAttrs.height + kcnt);
                 }
                 else
-                    XMoveResizeWindow(dsp, subw,
-                            attrs.x, attrs.y + kcnt,
-                            attrs.width, attrs.height);
+                    XMoveResizeWindow(dsp, subw.fram,
+                            framAttrs.x, framAttrs.y + kcnt,
+                            framAttrs.width, framAttrs.height);
             else if (Kp == K_k)
                 if (resizing) {
                     XMoveResizeWindow(dsp, wndw,
@@ -413,9 +414,9 @@ int main() {
                             framAttrs.width, framAttrs.height - kcnt);
                 }
                 else
-                    XMoveResizeWindow(dsp, subw,
-                            attrs.x, attrs.y - kcnt,
-                            attrs.width, attrs.height);
+                    XMoveResizeWindow(dsp, subw.fram,
+                            framAttrs.x, framAttrs.y - kcnt,
+                            framAttrs.width, framAttrs.height);
             else if (Kp == K_l)
                 if (resizing) {
                     XMoveResizeWindow(dsp, wndw,
@@ -426,9 +427,9 @@ int main() {
                             framAttrs.width + kcnt, framAttrs.height);
                 }
                 else
-                    XMoveResizeWindow(dsp, subw,
-                            attrs.x + kcnt, attrs.y,
-                            attrs.width, attrs.height);
+                    XMoveResizeWindow(dsp, subw.fram,
+                            framAttrs.x + kcnt, framAttrs.y,
+                            framAttrs.width, framAttrs.height);
             else if (Kp == K_r)
                 resizing = !resizing;
             else if (Kp == K_d)
@@ -468,7 +469,8 @@ int main() {
             // optional focus on alt+leftclick
             XGetWindowAttributes(dsp, e.xbutton.subwindow,
                     &attrs);
-            subw = e.xbutton.window;
+            subw.wndw = e.xbutton.subwindow;
+            subw.fram = e.xbutton.window;
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         }
