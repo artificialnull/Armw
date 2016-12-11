@@ -15,6 +15,10 @@
 typedef struct {
     Window wndw;
     Window fram;
+    Window left;
+    Window rite;
+    Window topp;
+    Window botm;
 } Viewable;
 
 
@@ -124,6 +128,10 @@ int main() {
     for (int i = 0; i < MAX_WINS; i++) {
         vwbls[i].wndw = 0;
         vwbls[i].fram = 0;
+        vwbls[i].left = 0;
+        vwbls[i].rite = 0;
+        vwbls[i].topp = 0;
+        vwbls[i].botm = 0;
     }
 
     // initialize display and root window
@@ -181,7 +189,7 @@ int main() {
             Mod1Mask, root, true,
             GrabModeAsync, GrabModeAsync);
 
-    // grab buttons for moving
+    // grab buttons for switching focus
     XGrabKey(dsp, K_h,
             Mod1Mask, root, true,
             GrabModeAsync, GrabModeAsync);
@@ -193,6 +201,21 @@ int main() {
             GrabModeAsync, GrabModeAsync);
     XGrabKey(dsp, K_l,
             Mod1Mask, root, true,
+            GrabModeAsync, GrabModeAsync);
+
+
+    // grab buttons for moving
+    XGrabKey(dsp, K_h,
+            Mod1Mask | ShiftMask, root, true,
+            GrabModeAsync, GrabModeAsync);
+    XGrabKey(dsp, K_j,
+            Mod1Mask | ShiftMask, root, true,
+            GrabModeAsync, GrabModeAsync);
+    XGrabKey(dsp, K_k,
+            Mod1Mask | ShiftMask, root, true,
+            GrabModeAsync, GrabModeAsync);
+    XGrabKey(dsp, K_l,
+            Mod1Mask | ShiftMask, root, true,
             GrabModeAsync, GrabModeAsync);
 
     // grab mod+mouse for focus
@@ -407,6 +430,8 @@ int main() {
             XGetWindowAttributes(dsp, wndw, &wndwAttrs);
             XGetWindowAttributes(dsp, fram, &framAttrs);
 
+            printf("%d\n", e.xkey.state);
+
             // long if-else chain to act on the window
             int Kp = e.xkey.keycode;
             if (Kp == K_opabe) {
@@ -424,9 +449,13 @@ int main() {
                                 framAttrs.width - kcnt, framAttrs.height);
                     }
                 } else {
-                    XMoveResizeWindow(dsp, subw.fram,
-                            framAttrs.x - kcnt, framAttrs.y,
-                            framAttrs.width, framAttrs.height);
+                    if (e.xkey.state == 9) {
+                        XMoveResizeWindow(dsp, subw.fram,
+                                framAttrs.x - kcnt, framAttrs.y,
+                                framAttrs.width, framAttrs.height);
+                    } else if (e.xkey.state == 8) {
+                        XSetInputFocus(dsp, subw.left, RevertToPointerRoot, CurrentTime);
+                    }
                 }
             } else if (Kp == K_j) {
                 // handle down actions
@@ -438,9 +467,13 @@ int main() {
                             framAttrs.x, framAttrs.y,
                             framAttrs.width, framAttrs.height + kcnt);
                 } else {
-                    XMoveResizeWindow(dsp, subw.fram,
-                            framAttrs.x, framAttrs.y + kcnt,
-                            framAttrs.width, framAttrs.height);
+                    if (e.xkey.state == 9) {
+                        XMoveResizeWindow(dsp, subw.fram,
+                                framAttrs.x, framAttrs.y + kcnt,
+                                framAttrs.width, framAttrs.height);
+                    } else if (e.xkey.state == 8) {
+                        XSetInputFocus(dsp, subw.botm, RevertToPointerRoot, CurrentTime);
+                    }
                 }
             } else if (Kp == K_k) {
                 // handle up actions
@@ -454,9 +487,13 @@ int main() {
                                 framAttrs.width, framAttrs.height - kcnt);
                     }
                 } else {
-                    XMoveResizeWindow(dsp, subw.fram,
-                            framAttrs.x, framAttrs.y - kcnt,
-                            framAttrs.width, framAttrs.height);
+                    if (e.xkey.state == 9) {
+                        XMoveResizeWindow(dsp, subw.fram,
+                                framAttrs.x, framAttrs.y - kcnt,
+                                framAttrs.width, framAttrs.height);
+                    } else if (e.xkey.state == 8) {
+                        XSetInputFocus(dsp, subw.topp, RevertToPointerRoot, CurrentTime);
+                    }
                 }
             } else if (Kp == K_l) {
                 // handle right actions
@@ -468,9 +505,13 @@ int main() {
                             framAttrs.x, framAttrs.y,
                             framAttrs.width + kcnt, framAttrs.height);
                 } else {
-                    XMoveResizeWindow(dsp, subw.fram,
-                            framAttrs.x + kcnt, framAttrs.y,
-                            framAttrs.width, framAttrs.height);
+                    if (e.xkey.state == 9) {
+                        XMoveResizeWindow(dsp, subw.fram,
+                                framAttrs.x + kcnt, framAttrs.y,
+                                framAttrs.width, framAttrs.height);
+                    } else if (e.xkey.state == 8) {
+                        XSetInputFocus(dsp, subw.rite, RevertToPointerRoot, CurrentTime);
+                    }
                 }
             } else if (Kp == K_r) {
                 // toggle resize mode
