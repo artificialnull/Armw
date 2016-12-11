@@ -10,16 +10,20 @@
 #include <string.h>
 #include <unistd.h>
 
+// Viewable struct for storing window-frame pair
+// plus possibly some other stuff later
 typedef struct {
     Window wndw;
     Window fram;
 } Viewable;
 
 
+// used for window positioning
 int gen_suitable_random(int max, int limiter) {
     return rand() % (max - limiter);
 }
 
+// simple error handler called when something goes wrong
 int handle_error(Display *dsp, XErrorEvent *err) {
     char err_text[1024];
     XGetErrorText(dsp, err->error_code, err_text, sizeof(err_text));
@@ -29,6 +33,7 @@ int handle_error(Display *dsp, XErrorEvent *err) {
     return 0;
 }
 
+// used to run external commands (eg dmenu) without stopping the wm
 void start_external(char *toRun) {
     if (fork() == 0) {
         puts("This is the child speaking");
@@ -39,6 +44,7 @@ void start_external(char *toRun) {
     }
 }
 
+// called in main loop, draws title string to the bottom left of a frame
 void draw_title_on_frame(Display *dsp, Window frame, XFontStruct *font,
         char *title, int ascent, int descent) {
     XWindowAttributes frAttrs;
@@ -51,9 +57,9 @@ void draw_title_on_frame(Display *dsp, Window frame, XFontStruct *font,
 
     XClearArea(dsp, frame, 0, frAttrs.height - ascent - descent, frAttrs.width, ascent + descent, true);
     XDrawString(dsp, frame, gc, 2, frAttrs.height - descent, title, strlen(title));
-//    printf("Title: %s\n", title);
 }
 
+// todo: delet this
 int find_window_in_array(Window *winarray, Window query) {
     for (int i = 0; i < MAX_WINS; i++) {
         if (query == winarray[i]) {
@@ -63,6 +69,8 @@ int find_window_in_array(Window *winarray, Window query) {
     return -1;
 }
 
+// attempts to get a title through FetchName, uses WMName otherwise
+// generally called with draw_title_on_frame
 char *get_title_of_window(Display *dsp, Window titled, char *ttl,
         int *asc, int *desc, XFontStruct *font) {
     int direction, ascent, descent;
@@ -84,12 +92,14 @@ char *get_title_of_window(Display *dsp, Window titled, char *ttl,
     return ttl;
 }
 
-
+// called when mapping window, used to add parent frame to show title, have border, etc
+// gets title and stores it in the frame (not really used), but does not actually draw
+// the title on the frame
 Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
         XWindowAttributes attrs, XFontStruct *font) {
     int ascent, descent;
     char *title;
-    get_title_of_window(dsp, toFrame, title, &ascent, &descent, font);
+    title = get_title_of_window(dsp, toFrame, title, &ascent, &descent, font);
     Window frame = XCreateSimpleWindow(
             dsp, root, attrs.x, attrs.y,
             attrs.width, attrs.height + (ascent + descent), 2, 0x7cafc2, 0x181818);
@@ -105,10 +115,12 @@ Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
     return frame;
 }
 
+// contains variable decls
 int main() {
-    srand(time(NULL));
+    srand(time(NULL)); // seed the rng for window positioning
     XWindowAttributes attrs;
-    Viewable vwbls[MAX_WINS];
+    Viewable vwbls[MAX_WINS]; // create array of Viewables for organization
+    // and set all viewables to 0
     for (int i = 0; i < MAX_WINS; i++) {
         vwbls[i].wndw = 0;
         vwbls[i].fram = 0;
@@ -118,6 +130,7 @@ int main() {
     Display *dsp = XOpenDisplay(0);
     Window root = DefaultRootWindow(dsp);
 
+    // get display geometry for random calculations
     int dispW, dispH, dispX, dispY, dispBW, dispZ;
     XGetGeometry(dsp, root, &root,
             &dispX, &dispY,
@@ -125,17 +138,18 @@ int main() {
             &dispBW, &dispZ);
     printf("Display dimensions: %dx%d\n", dispW, dispH);
 
+    // set input masks for the root window so we can get events
     XSelectInput(dsp, root,
             SubstructureRedirectMask | SubstructureNotifyMask |
             PropertyChangeMask | 0);
 
 
+    // intern some atoms so we can change and compare them later
     Atom WM_PROTOCOLS     = XInternAtom(dsp, "WM_PROTOCOLS", false);
     Atom WM_DELETE_WINDOW = XInternAtom(dsp, "WM_DELETE_WINDOW", false);
     Atom WM_SUPP_CHECK    = XInternAtom(dsp, "_NET_SUPPORTING_WM_CHECK", false);
     Atom WM_NAME          = XInternAtom(dsp, "_NET_WM_NAME", false);
     Atom UTF8_STR         = XInternAtom(dsp, "UTF8_STRING", false);
-
     XChangeProperty(dsp, root, WM_SUPP_CHECK, XA_WINDOW, 32, PropModeReplace, (unsigned char *)&root,  1);
     XChangeProperty(dsp, root, WM_NAME,       UTF8_STR,  8,  PropModeReplace, (unsigned char *)"Armw", 5);
 
@@ -201,18 +215,21 @@ int main() {
             Mod1Mask, root, true,
             GrabModeAsync, GrabModeAsync);
 
+    // final variable declarations
     Viewable subw;
     int kcnt = 2;
     bool resizing = false;
     unsigned long ltime = time(NULL);
     int count = 0;
-
     XEvent e;
+
+    // main loop, contains event checking and processing
     while (true) {
         if (XPending(dsp) > 0) {
-            XNextEvent(dsp, &e);
+            XNextEvent(dsp, &e); // get the next event if there is one
+            // attempt to avoid blocking
         } else {
-//            puts("No events, titling windows in spare time");
+            // title all frames in every Viewable
             bool didAnything = false;
             for (int i = 0; i < MAX_WINS; i++) {
                 Viewable vwbl = vwbls[i];
@@ -228,6 +245,9 @@ int main() {
                     didAnything = true;
                 }
             }
+
+            // semi-sleep for a while if there are no events
+            // this goes on for longer if no windows were actually titled
             while (XPending(dsp) == 0 && count < (didAnything ? 40 : 80)) {
                 struct timespec tosleep;
                 tosleep.tv_sec = 0;
@@ -243,9 +263,11 @@ int main() {
         printf("Recv: event, type: %d \n", e.type);
 
         if (e.type == MapRequest) {
-            // map window with frame and add to list
-
+            // map window with frame and add the ids to an available Viewable
             puts("Attempting to map window");
+
+            // if there is space in the Viewable list, then we can map the window
+            // otherwise, reject it (possibly will cause a crash but idk)
             bool foundBlank = false;
             for (int i = 0; i < MAX_WINS; i++) {
                 if (vwbls[i].wndw == 0) {
@@ -259,6 +281,8 @@ int main() {
 
                 continue;
             }
+
+            // get and set attributes needed for random positioning
             XGetWindowAttributes(dsp, e.xmaprequest.window,
                     &attrs);
             if (attrs.width == dispW) {
@@ -271,10 +295,10 @@ int main() {
             attrs.y = gen_suitable_random(dispH, attrs.height);
             printf("%dx%d\n", attrs.width, attrs.height);
 
-            puts("Adding frame to window...");
+            // actually add the frame here (function includes the mapping of both window and frame
             Window frame = add_frame_to_window(dsp, root, e.xmaprequest.window, attrs, font);
-            puts("Added frame to window");
 
+            // finally, store the ids in an empty viewable
             printf("Mapping window: %d/frame: %d\n", e.xmaprequest.window, frame);
             for (int i = 0; i < MAX_WINS; i++) {
                 if (vwbls[i].wndw == 0) {
@@ -326,6 +350,8 @@ int main() {
             // destroy empty frames and remove window from list
             for (int i = 0; i < MAX_WINS; i++) {
                 if (vwbls[i].wndw == e.xdestroywindow.window) {
+                    // find the appropriate Viewable, unparent the window from the frame,
+                    // kill the frame, and reset the Viewable
                     printf("Destroyed window: %d -> frame: %d\n", vwbls[i].wndw,
                             vwbls[i].fram);
                     XUnmapWindow(dsp, vwbls[i].fram);
@@ -341,6 +367,8 @@ int main() {
             for (int i = 0; i < MAX_WINS; i++) {
                 if (vwbls[i].wndw == e.xcrossing.subwindow ||
                         vwbls[i].fram == e.xcrossing.window) {
+                    // match the event subwindow with a Viewable and save the Viewable's
+                    // frame and window info
                     e.xcrossing.subwindow = vwbls[i].wndw;
                     subw.wndw = vwbls[i].wndw;
                     subw.fram = vwbls[i].fram;
@@ -351,47 +379,57 @@ int main() {
             printf("Entered window: %d\n", subw.wndw);
             XGetWindowAttributes(dsp, subw.wndw,
                     &attrs);
+            // explicitly change focus to the desired window
             XSetInputFocus(dsp, subw.wndw, RevertToPointerRoot, CurrentTime);
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         } else if (e.type == KeyPress && e.xkey.keycode == K_e) {
+            // kill the wm with a cheerful message
             puts("Gonna go die now, seeya!");
             exit(0);
         } else if (e.type == KeyPress && subw.wndw != None) {
             // handle various keyboard actions
             XGetWindowAttributes(dsp, subw.wndw, &attrs);
 
+
+            // set the movement scale based on how long its been since the last keyboard event
+            // may change this in the future for consistency
             if (time(NULL) - ltime < 2) { kcnt++; }
             else { kcnt = 2; }
-
             ltime = time(NULL);
 
+            // get attributes about the current focused window
             Window wndw = subw.wndw;
             Window fram = subw.fram;
-
             printf("Got keypress from window: %d/frame: %d\n", wndw, fram);
             XWindowAttributes wndwAttrs;
             XWindowAttributes framAttrs;
             XGetWindowAttributes(dsp, wndw, &wndwAttrs);
             XGetWindowAttributes(dsp, fram, &framAttrs);
 
+            // long if-else chain to act on the window
             int Kp = e.xkey.keycode;
-            if (Kp == K_opabe)
+            if (Kp == K_opabe) {
+                // put window on top if so desired
                 XRaiseWindow(dsp, subw.wndw);
-            else if (Kp == K_h)
+            } else if (Kp == K_h) {
+                // handle left actions (resizing and movement)
                 if (resizing) {
-                    XMoveResizeWindow(dsp, wndw,
-                            wndwAttrs.x, wndwAttrs.y,
-                            wndwAttrs.width - kcnt, wndwAttrs.height);
-                    XMoveResizeWindow(dsp, fram,
-                            framAttrs.x, framAttrs.y,
-                            framAttrs.width - kcnt, framAttrs.height);
-                }
-                else
+                    if (wndwAttrs.width > kcnt) {
+                        XMoveResizeWindow(dsp, wndw,
+                                wndwAttrs.x, wndwAttrs.y,
+                                wndwAttrs.width - kcnt, wndwAttrs.height);
+                        XMoveResizeWindow(dsp, fram,
+                                framAttrs.x, framAttrs.y,
+                                framAttrs.width - kcnt, framAttrs.height);
+                    }
+                } else {
                     XMoveResizeWindow(dsp, subw.fram,
                             framAttrs.x - kcnt, framAttrs.y,
                             framAttrs.width, framAttrs.height);
-            else if (Kp == K_j)
+                }
+            } else if (Kp == K_j) {
+                // handle down actions
                 if (resizing) {
                     XMoveResizeWindow(dsp, wndw,
                             wndwAttrs.x, wndwAttrs.y,
@@ -399,25 +437,29 @@ int main() {
                     XMoveResizeWindow(dsp, fram,
                             framAttrs.x, framAttrs.y,
                             framAttrs.width, framAttrs.height + kcnt);
-                }
-                else
+                } else {
                     XMoveResizeWindow(dsp, subw.fram,
                             framAttrs.x, framAttrs.y + kcnt,
                             framAttrs.width, framAttrs.height);
-            else if (Kp == K_k)
-                if (resizing) {
-                    XMoveResizeWindow(dsp, wndw,
-                            wndwAttrs.x, wndwAttrs.y,
-                            wndwAttrs.width, wndwAttrs.height - kcnt);
-                    XMoveResizeWindow(dsp, fram,
-                            framAttrs.x, framAttrs.y,
-                            framAttrs.width, framAttrs.height - kcnt);
                 }
-                else
+            } else if (Kp == K_k) {
+                // handle up actions
+                if (resizing) {
+                    if (wndwAttrs.height > kcnt) {
+                        XMoveResizeWindow(dsp, wndw,
+                                wndwAttrs.x, wndwAttrs.y,
+                                wndwAttrs.width, wndwAttrs.height - kcnt);
+                        XMoveResizeWindow(dsp, fram,
+                                framAttrs.x, framAttrs.y,
+                                framAttrs.width, framAttrs.height - kcnt);
+                    }
+                } else {
                     XMoveResizeWindow(dsp, subw.fram,
                             framAttrs.x, framAttrs.y - kcnt,
                             framAttrs.width, framAttrs.height);
-            else if (Kp == K_l)
+                }
+            } else if (Kp == K_l) {
+                // handle right actions
                 if (resizing) {
                     XMoveResizeWindow(dsp, wndw,
                             wndwAttrs.x, wndwAttrs.y,
@@ -425,18 +467,25 @@ int main() {
                     XMoveResizeWindow(dsp, fram,
                             framAttrs.x, framAttrs.y,
                             framAttrs.width + kcnt, framAttrs.height);
-                }
-                else
+                } else {
                     XMoveResizeWindow(dsp, subw.fram,
                             framAttrs.x + kcnt, framAttrs.y,
                             framAttrs.width, framAttrs.height);
-            else if (Kp == K_r)
+                }
+            } else if (Kp == K_r) {
+                // toggle resize mode
                 resizing = !resizing;
-            else if (Kp == K_d)
+            } else if (Kp == K_d) {
+                // start dmenu
                 start_external("dmenu_run");
-            else if (Kp == K_q) {
+            } else if (Kp == K_q) {
+                // kill the window in the best way possible
+
                 Atom *supported;
                 int num_supported;
+
+                // get the available window protocols and see if it supports
+                // elegant killing
                 XGetWMProtocols(dsp, wndw, &supported, &num_supported);
                 bool found = false;
                 for (int i = 0; i < num_supported; i++) {
@@ -448,6 +497,7 @@ int main() {
                     }
                 }
                 if (found) {
+                    // elegantly kill a window with support
                     printf("Sending killMsg to window: %d\n", wndw);
                     XEvent killMsg;
                     killMsg.xclient.type = ClientMessage;
@@ -457,6 +507,7 @@ int main() {
                     killMsg.xclient.data.l[0] = WM_DELETE_WINDOW;
                     XSendEvent(dsp, wndw, false, 0, &killMsg);
                 } else {
+                    // just kill the client with more simple windows
                     printf("Killing window: %d\n", wndw);
                     XKillClient(dsp, wndw);
                     printf("Killing frame: %d\n", fram);
