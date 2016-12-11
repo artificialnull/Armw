@@ -1,5 +1,6 @@
 #define MAX_WINS 32
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,16 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+
+typedef struct {
+    Window wndw;
+    Window fram;
+    int x;
+    int y;
+    int w;
+    int h;
+} Viewable;
+
 
 int gen_suitable_random(int max, int limiter) {
     return rand() % (max - limiter);
@@ -19,6 +30,16 @@ int handle_error(Display *dsp, XErrorEvent *err) {
     printf("Request:     %d\nError code:  %d\nError text:  %s\nResource ID: %d\n",
             err->request_code, err->error_code, err_text, err->resourceid);
     return 0;
+}
+
+void start_external(char *toRun) {
+    if (fork() == 0) {
+        puts("This is the child speaking");
+        system(toRun);
+        exit(0);
+    } else {
+        puts("This is the parent speaking");
+    }
 }
 
 void draw_title_on_frame(Display *dsp, Window frame, XFontStruct *font,
@@ -61,7 +82,12 @@ char *get_title_of_window(Display *dsp, Window titled, char *ttl,
 
     XFetchName(dsp, titled, &ttl);
     if (ttl == NULL) {
-        ttl = "Testing!";
+        XTextProperty textp_return;
+        XGetWMName(dsp, titled, &textp_return);
+        ttl = textp_return.value;
+        if (ttl == NULL) {
+            ttl = "Armw Window";
+        }
     }
 
     XTextExtents(font, ttl, strlen(ttl), &direction, &ascent, &descent, &overall);
@@ -128,6 +154,7 @@ int main() {
     const int K_l     = XKeysymToKeycode(dsp, 'l');
     const int K_r     = XKeysymToKeycode(dsp, 'r');
     const int K_q     = XKeysymToKeycode(dsp, 'q');
+    const int K_d     = XKeysymToKeycode(dsp, 'd');
 
     // add error handler and send request to server
     XSetErrorHandler(&handle_error);
@@ -170,6 +197,11 @@ int main() {
             Mod1Mask, root, true,
             GrabModeAsync, GrabModeAsync);
 
+    // grad mod+d for dmenu
+    XGrabKey(dsp, K_d,
+            Mod1Mask, root, true,
+            GrabModeAsync, GrabModeAsync);
+
     Window subw = None;
     int kcnt = 2;
     bool resizing = false;
@@ -181,6 +213,8 @@ int main() {
         if (XPending(dsp) > 0) {
             XNextEvent(dsp, &e);
         } else {
+            puts("No events, titling windows in spare time");
+            bool didAnything = false;
             for (int i = 0; i < MAX_WINS; i++) {
                 Window wndw = wndws[i];
                 if (wndw != 0) {
@@ -192,9 +226,10 @@ int main() {
                             &attrs);
                     draw_title_on_frame(dsp, frams[i],
                             font, title, ascent, descent);
+                    didAnything = true;
                 }
             }
-            while (XPending(dsp) == 0 && count < 40) {
+            while (XPending(dsp) == 0 && count < (didAnything ? 40 : 80)) {
                 struct timespec tosleep;
                 tosleep.tv_sec = 0;
                 tosleep.tv_nsec = 25000000;
@@ -306,7 +341,7 @@ int main() {
             XGetWindowAttributes(dsp, e.xcrossing.subwindow,
                     &attrs);
             subw = e.xcrossing.window;
-            XSetInputFocus(dsp, e.xcrossing.subwindow, RevertToNone, CurrentTime);
+            XSetInputFocus(dsp, e.xcrossing.subwindow, RevertToPointerRoot, CurrentTime);
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         } else if (e.type == KeyPress && subw != None) {
@@ -396,6 +431,8 @@ int main() {
                             attrs.width, attrs.height);
             else if (Kp == K_r)
                 resizing = !resizing;
+            else if (Kp == K_d)
+                start_external("dmenu_run");
             else if (Kp == K_q) {
                 Atom *supported;
                 int num_supported;
