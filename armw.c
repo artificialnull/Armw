@@ -12,14 +12,15 @@
 
 // Viewable struct for storing window-frame pair
 // plus possibly some other stuff later
-typedef struct {
+typedef struct Viewable Viewable;
+struct Viewable {
     Window wndw;
     Window fram;
-    Window left;
-    Window rite;
-    Window topp;
-    Window botm;
-} Viewable;
+    int left;
+    int rite;
+    int topp;
+    int botm;
+};
 
 
 // used for window positioning
@@ -128,10 +129,10 @@ int main() {
     for (int i = 0; i < MAX_WINS; i++) {
         vwbls[i].wndw = 0;
         vwbls[i].fram = 0;
-        vwbls[i].left = 0;
-        vwbls[i].rite = 0;
-        vwbls[i].topp = 0;
-        vwbls[i].botm = 0;
+        vwbls[i].left = -1;
+        vwbls[i].rite = -1;
+        vwbls[i].topp = -1;
+        vwbls[i].botm = -1;
     }
 
     // initialize display and root window
@@ -239,7 +240,7 @@ int main() {
             GrabModeAsync, GrabModeAsync);
 
     // final variable declarations
-    Viewable subw;
+    int subw = 0;
     int kcnt = 2;
     bool resizing = false;
     unsigned long ltime = time(NULL);
@@ -283,7 +284,14 @@ int main() {
             continue;
         }
 
-        printf("Recv: event, type: %d \n", e.type);
+        //printf("Recv: event, type: %d \n", e.type);
+        /*
+        for (int i = 0; i < MAX_WINS; i++) {
+            if (vwbls[i].wndw != 0) {
+                printf("%d\n", i);
+            }
+        }
+        */
 
         if (e.type == MapRequest) {
             // map window with frame and add the ids to an available Viewable
@@ -327,48 +335,17 @@ int main() {
                 if (vwbls[i].wndw == 0) {
                     vwbls[i].wndw = e.xmaprequest.window;
                     vwbls[i].fram = frame;
+                    vwbls[i].topp = subw;
+                    vwbls[i].left = vwbls[subw].left;
+                    vwbls[i].rite = vwbls[subw].rite;
+                    printf("Set topp on [%d] window to: %d\n", i, vwbls[subw].wndw);
+                    vwbls[subw].botm = i;
+                    printf("Set botm on [%d] window to: %d\n", subw, vwbls[i].wndw);
                     break;
                 }
             }
         } else if (e.type == Expose) {
-            // redraw frame elements if window was overlapped
-            /* if (e.xexpose.window != root) {
-                int ascent, descent, direction;
-                XCharStruct overall;
-                char *title;
-                int fsch;
-                if (find_window_in_array(wndws, e.xproperty.window) == -1) {
-                    fsch = find_window_in_array(frams, e.xproperty.window);
-                }
-                Window wndw = wndws[fsch];
-
-                XFetchName(dsp, wndw, &title);
-                //title = "meems";
-                XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
-                XGetWindowAttributes(dsp, e.xexpose.window,
-                        &attrs);
-                draw_title_on_frame(dsp, e.xexpose.window,
-                        font, title, ascent, descent);
-            } */
         } else if (e.type == PropertyNotify) {
-            /*
-            XGetWindowAttributes(dsp, e.xproperty.window,
-                    &attrs);
-            puts("PropertyChange!");
-            int fsch;
-            if (find_window_in_array(wndws, e.xproperty.window) == -1) {
-                fsch = find_window_in_array(frams, e.xproperty.window);
-            }
-            Window wndw = wndws[fsch];
-            printf("window: %d\n", wndw);
-            int ascent, descent, direction;
-            XCharStruct overall;
-            char *title;
-            XFetchName(dsp, wndw, &title);
-            XTextExtents(font, title, strlen(title), &direction, &ascent, &descent, &overall);
-            draw_title_on_frame(dsp, e.xexpose.window,
-                    font, title, ascent, descent);
-            */
         } else if (e.type == DestroyNotify) {
             // destroy empty frames and remove window from list
             for (int i = 0; i < MAX_WINS; i++) {
@@ -393,26 +370,25 @@ int main() {
                     // match the event subwindow with a Viewable and save the Viewable's
                     // frame and window info
                     e.xcrossing.subwindow = vwbls[i].wndw;
-                    subw.wndw = vwbls[i].wndw;
-                    subw.fram = vwbls[i].fram;
+                    subw = i;
                     break;
                 }
             }
 
-            printf("Entered window: %d\n", subw.wndw);
-            XGetWindowAttributes(dsp, subw.wndw,
+            printf("Entered window: %d\n", vwbls[subw].wndw);
+            XGetWindowAttributes(dsp, vwbls[subw].wndw,
                     &attrs);
             // explicitly change focus to the desired window
-            XSetInputFocus(dsp, subw.wndw, RevertToPointerRoot, CurrentTime);
+            XSetInputFocus(dsp, vwbls[subw].wndw, RevertToPointerRoot, CurrentTime);
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         } else if (e.type == KeyPress && e.xkey.keycode == K_e) {
             // kill the wm with a cheerful message
             puts("Gonna go die now, seeya!");
             exit(0);
-        } else if (e.type == KeyPress && subw.wndw != None) {
+        } else if (e.type == KeyPress && vwbls[subw].wndw != None) {
             // handle various keyboard actions
-            XGetWindowAttributes(dsp, subw.wndw, &attrs);
+            XGetWindowAttributes(dsp, vwbls[subw].wndw, &attrs);
 
 
             // set the movement scale based on how long its been since the last keyboard event
@@ -422,8 +398,8 @@ int main() {
             ltime = time(NULL);
 
             // get attributes about the current focused window
-            Window wndw = subw.wndw;
-            Window fram = subw.fram;
+            Window wndw = vwbls[subw].wndw;
+            Window fram = vwbls[subw].fram;
             printf("Got keypress from window: %d/frame: %d\n", wndw, fram);
             XWindowAttributes wndwAttrs;
             XWindowAttributes framAttrs;
@@ -436,7 +412,7 @@ int main() {
             int Kp = e.xkey.keycode;
             if (Kp == K_opabe) {
                 // put window on top if so desired
-                XRaiseWindow(dsp, subw.wndw);
+                XRaiseWindow(dsp, vwbls[subw].fram);
             } else if (Kp == K_h) {
                 // handle left actions (resizing and movement)
                 if (resizing) {
@@ -450,11 +426,12 @@ int main() {
                     }
                 } else {
                     if (e.xkey.state == 9) {
-                        XMoveResizeWindow(dsp, subw.fram,
+                        XMoveResizeWindow(dsp, vwbls[subw].fram,
                                 framAttrs.x - kcnt, framAttrs.y,
                                 framAttrs.width, framAttrs.height);
-                    } else if (e.xkey.state == 8) {
-                        XSetInputFocus(dsp, subw.left, RevertToPointerRoot, CurrentTime);
+                    } else if (e.xkey.state == 8 && vwbls[subw].left != -1) {
+                        XSetInputFocus(dsp, vwbls[vwbls[subw].left].wndw, RevertToPointerRoot, CurrentTime);
+                        subw = vwbls[subw].left;
                     }
                 }
             } else if (Kp == K_j) {
@@ -468,11 +445,13 @@ int main() {
                             framAttrs.width, framAttrs.height + kcnt);
                 } else {
                     if (e.xkey.state == 9) {
-                        XMoveResizeWindow(dsp, subw.fram,
+                        XMoveResizeWindow(dsp, vwbls[subw].fram,
                                 framAttrs.x, framAttrs.y + kcnt,
                                 framAttrs.width, framAttrs.height);
-                    } else if (e.xkey.state == 8) {
-                        XSetInputFocus(dsp, subw.botm, RevertToPointerRoot, CurrentTime);
+                    } else if (e.xkey.state == 8 && vwbls[subw].botm != -1) {
+                        XSetInputFocus(dsp, vwbls[vwbls[subw].botm].wndw, RevertToPointerRoot, CurrentTime);
+                        printf("Focus changed to window: %d\n", vwbls[vwbls[subw].botm].wndw);
+                        subw = vwbls[subw].botm;
                     }
                 }
             } else if (Kp == K_k) {
@@ -488,11 +467,13 @@ int main() {
                     }
                 } else {
                     if (e.xkey.state == 9) {
-                        XMoveResizeWindow(dsp, subw.fram,
+                        XMoveResizeWindow(dsp, vwbls[subw].fram,
                                 framAttrs.x, framAttrs.y - kcnt,
                                 framAttrs.width, framAttrs.height);
-                    } else if (e.xkey.state == 8) {
-                        XSetInputFocus(dsp, subw.topp, RevertToPointerRoot, CurrentTime);
+                    } else if (e.xkey.state == 8 && vwbls[subw].topp != -1) {
+                        XSetInputFocus(dsp, vwbls[vwbls[subw].topp].wndw, RevertToPointerRoot, CurrentTime);
+                        printf("Focus changed to window: %d\n", vwbls[vwbls[subw].topp].wndw);
+                        subw = vwbls[subw].topp;
                     }
                 }
             } else if (Kp == K_l) {
@@ -506,11 +487,12 @@ int main() {
                             framAttrs.width + kcnt, framAttrs.height);
                 } else {
                     if (e.xkey.state == 9) {
-                        XMoveResizeWindow(dsp, subw.fram,
+                        XMoveResizeWindow(dsp, vwbls[subw].fram,
                                 framAttrs.x + kcnt, framAttrs.y,
                                 framAttrs.width, framAttrs.height);
-                    } else if (e.xkey.state == 8) {
-                        XSetInputFocus(dsp, subw.rite, RevertToPointerRoot, CurrentTime);
+                    } else if (e.xkey.state == 8 && vwbls[subw].rite != -1) {
+                        XSetInputFocus(dsp, vwbls[vwbls[subw].rite].wndw, RevertToPointerRoot, CurrentTime);
+                        subw = vwbls[subw].rite;
                     }
                 }
             } else if (Kp == K_r) {
@@ -561,8 +543,8 @@ int main() {
             // optional focus on alt+leftclick
             XGetWindowAttributes(dsp, e.xbutton.subwindow,
                     &attrs);
-            subw.wndw = e.xbutton.subwindow;
-            subw.fram = e.xbutton.window;
+            vwbls[subw].wndw = e.xbutton.subwindow;
+            vwbls[subw].fram = e.xbutton.window;
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
         }
