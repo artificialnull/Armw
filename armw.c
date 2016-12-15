@@ -22,7 +22,6 @@ struct Viewable {
     int botm;
 };
 
-
 // used for window positioning
 int gen_suitable_random(int max, int limiter) {
     return rand() % (max - limiter);
@@ -107,16 +106,20 @@ Window add_frame_to_window(Display *dsp, Window root, Window toFrame,
     title = get_title_of_window(dsp, toFrame, title, &ascent, &descent, font);
     Window frame = XCreateSimpleWindow(
             dsp, root, attrs.x, attrs.y,
-            attrs.width, attrs.height + (ascent + descent), 2, 0x7cafc2, 0x181818);
+            attrs.width - 4, attrs.height - 4, 2, 0x7cafc2, 0x181818);
 
     XReparentWindow(dsp, toFrame, frame, 0, 0);
     XSelectInput(dsp, frame,
             SubstructureRedirectMask | SubstructureNotifyMask
             | PropertyChangeMask | EnterWindowMask | FocusChangeMask);
+    XMoveResizeWindow(dsp, toFrame,
+            0, 0,
+            attrs.width - 4, attrs.height - 4 - (ascent + descent));
+
     XMapWindow(dsp, frame);
     XMapWindow(dsp, toFrame);
 
-    XStoreName(dsp, frame, title);
+    //XStoreName(dsp, frame, title);
     return frame;
 }
 
@@ -152,6 +155,7 @@ int main() {
             SubstructureRedirectMask | SubstructureNotifyMask |
             PropertyChangeMask | 0);
 
+    XSetInputFocus(dsp, root, RevertToPointerRoot, CurrentTime);
 
     // intern some atoms so we can change and compare them later
     Atom WM_PROTOCOLS     = XInternAtom(dsp, "WM_PROTOCOLS", false);
@@ -172,6 +176,8 @@ int main() {
     const int K_q     = XKeysymToKeycode(dsp, 'q');
     const int K_d     = XKeysymToKeycode(dsp, 'd');
     const int K_e     = XKeysymToKeycode(dsp, 'e');
+    const int K_b     = XKeysymToKeycode(dsp, 'b');
+    const int K_v     = XKeysymToKeycode(dsp, 'v');
 
     // add error handler and send request to server
     XSetErrorHandler(&handle_error);
@@ -234,17 +240,28 @@ int main() {
             Mod1Mask | ShiftMask, root, true,
             GrabModeAsync, GrabModeAsync);
 
-    // grad mod+d for dmenu
+    // grab mod+d for dmenu
     XGrabKey(dsp, K_d,
             Mod1Mask, root, true,
             GrabModeAsync, GrabModeAsync);
 
+    // grab keys for changing tiling style
+    XGrabKey(dsp, K_b,
+            Mod1Mask, root, true,
+            GrabModeAsync, GrabModeAsync);
+    XGrabKey(dsp, K_v,
+            Mod1Mask, root, true,
+            GrabModeAsync, GrabModeAsync);
+
+
     // final variable declarations
-    int subw = 0;
+    int subw = -1;
     int kcnt = 2;
+    int filled = 0;
     bool resizing = false;
     unsigned long ltime = time(NULL);
     int count = 0;
+    bool tilingVertically = false;
     XEvent e;
 
     // main loop, contains event checking and processing
@@ -285,17 +302,14 @@ int main() {
         }
 
         //printf("Recv: event, type: %d \n", e.type);
-        /*
-        for (int i = 0; i < MAX_WINS; i++) {
-            if (vwbls[i].wndw != 0) {
-                printf("%d\n", i);
-            }
-        }
-        */
-
         if (e.type == MapRequest) {
             // map window with frame and add the ids to an available Viewable
             puts("Attempting to map window");
+            XGetGeometry(dsp, root, &root,
+                    &dispX, &dispY,
+                    &dispW, &dispH,
+                    &dispBW, &dispZ);
+
 
             // if there is space in the Viewable list, then we can map the window
             // otherwise, reject it (possibly will cause a crash but idk)
@@ -316,18 +330,72 @@ int main() {
             // get and set attributes needed for random positioning
             XGetWindowAttributes(dsp, e.xmaprequest.window,
                     &attrs);
-            if (attrs.width == dispW) {
-                attrs.width -= 10;
-            }
-            if (attrs.height == dispH) {
-                attrs.height -= 10;
-            }
-            attrs.x = gen_suitable_random(dispW, attrs.width);
-            attrs.y = gen_suitable_random(dispH, attrs.height);
-            printf("%dx%d\n", attrs.width, attrs.height);
 
+            printf("There are currently %d windows filled\n", filled);
+            if (filled == 0) {
+                // fill whole screen if nothing else is there
+                puts("Setting attrs to fullscreen");
+                printf("%dx%d\n", dispW, dispH);
+                attrs.width = dispW;
+                attrs.height = dispH;
+                attrs.x = 0;
+                attrs.y = 0;
+            } else {
+                XWindowAttributes priorAttrs, pwndwAttrs;
+                XGetWindowAttributes(dsp, vwbls[subw].fram, &priorAttrs);
+                XGetWindowAttributes(dsp, vwbls[subw].wndw, &pwndwAttrs);
+                int ascent, descent, direction;
+                XCharStruct overall;
+                XTextExtents(font, "Ag", strlen("Ag"), &direction, &ascent, &descent, &overall);
+
+               if (tilingVertically) {
+                    XMoveResizeWindow(dsp, vwbls[subw].fram,
+                            priorAttrs.x, priorAttrs.y,
+                            priorAttrs.width, priorAttrs.height / 2);
+                    // we get the attributes for the window and the frame
+                    // then we resize the frame to make room for the new Viewable
+
+                    XMoveResizeWindow(dsp, vwbls[subw].wndw,
+                            pwndwAttrs.x, pwndwAttrs.y,
+                            pwndwAttrs.width, (priorAttrs.height / 2) - (ascent + descent));
+                    // and, after calculating the font dims (urggg) we resize the window as well
+
+                    priorAttrs.width += 4;
+                    priorAttrs.height += 4;
+                    // adjusting for 2px borders
+
+                    printf("%dx%d @ %d,%d\n", priorAttrs.width, priorAttrs.height, priorAttrs.x, priorAttrs.y);
+                    attrs.width = priorAttrs.width;
+                    attrs.x = priorAttrs.x;
+                    attrs.y = priorAttrs.y + (priorAttrs.height / 2);
+                    attrs.height = priorAttrs.height / 2;
+                    // we set the new window to take up the space which was left over when we resized the old one
+                    // essentially, we split the old window in two and filled in the new half
+                } else {
+                    // same thing for horizontal, but font stuff isnt needed here
+                    XMoveResizeWindow(dsp, vwbls[subw].fram,
+                            priorAttrs.x, priorAttrs.y,
+                            priorAttrs.width / 2, priorAttrs.height);
+                    XMoveResizeWindow(dsp, vwbls[subw].wndw,
+                            pwndwAttrs.x, pwndwAttrs.y,
+                            (priorAttrs.width / 2), pwndwAttrs.height);
+                    priorAttrs.width += 4;
+                    priorAttrs.height += 4;
+
+                    attrs.width = priorAttrs.width / 2;
+                    attrs.x = priorAttrs.x + (priorAttrs.width / 2);
+                    attrs.y = priorAttrs.y;
+                    attrs.height = priorAttrs.height;
+                }
+            }
+
+            printf("Requesting %dx%d @ %d,%d\n", attrs.width, attrs.height, attrs.x, attrs.y);
             // actually add the frame here (function includes the mapping of both window and frame
             Window frame = add_frame_to_window(dsp, root, e.xmaprequest.window, attrs, font);
+            if (filled == 0) {
+                XSetInputFocus(dsp, e.xmaprequest.window, RevertToPointerRoot, CurrentTime);
+                subw = -1;
+            }
 
             // finally, store the ids in an empty viewable
             printf("Mapping window: %d/frame: %d\n", e.xmaprequest.window, frame);
@@ -335,34 +403,100 @@ int main() {
                 if (vwbls[i].wndw == 0) {
                     vwbls[i].wndw = e.xmaprequest.window;
                     vwbls[i].fram = frame;
-                    vwbls[i].topp = subw;
-                    vwbls[i].left = vwbls[subw].left;
-                    vwbls[i].rite = vwbls[subw].rite;
-                    printf("Set topp on [%d] window to: %d\n", i, vwbls[subw].wndw);
-                    vwbls[subw].botm = i;
-                    printf("Set botm on [%d] window to: %d\n", subw, vwbls[i].wndw);
+                    if (subw != -1) {
+                        puts("This isn't the first window, so we can set some properties");
+                        if (tilingVertically) {
+                            vwbls[i].topp = subw;
+                            vwbls[i].left = vwbls[subw].left;
+                            vwbls[i].rite = vwbls[subw].rite;
+                            printf("Set topp on [%d] window to: %d\n", i, vwbls[subw].wndw);
+                            vwbls[subw].botm = i;
+                            printf("Set botm on [%d] window to: %d\n", subw, vwbls[i].wndw);
+                        } else {
+                            vwbls[i].left = subw;
+                            vwbls[i].topp = vwbls[subw].topp;
+                            vwbls[i].botm = vwbls[subw].botm;
+                            vwbls[subw].rite = i;
+                        }
+                    } else {
+                        puts("This is the first window, so we can't set any properties");
+                        subw = i;
+                    }
+                    filled++;
                     break;
                 }
             }
+            puts("Finished mapping Viewable");
         } else if (e.type == Expose) {
         } else if (e.type == PropertyNotify) {
         } else if (e.type == DestroyNotify) {
+            puts("Destroying a window");
             // destroy empty frames and remove window from list
             for (int i = 0; i < MAX_WINS; i++) {
                 if (vwbls[i].wndw == e.xdestroywindow.window) {
                     // find the appropriate Viewable, unparent the window from the frame,
                     // kill the frame, and reset the Viewable
+                    Window focused = vwbls[subw].wndw;
+                    int toFocus;
+                    printf("Focused: %d vs ToDelete: %d\n", focused, vwbls[i].wndw);
+                    if (focused == vwbls[i].wndw) {
+                        puts("Refocusing, dont want to delete focused window");
+                        if (vwbls[i].topp != -1) {
+                            toFocus = vwbls[i].topp;
+                            puts("Focusing on top");
+                        } else if (vwbls[i].botm != -1) {
+                            toFocus = vwbls[i].botm;
+                            puts("Focusing on bottom");
+                        } else if (vwbls[i].left != -1) {
+                            toFocus = vwbls[i].left;
+                            puts("Focusing on left");
+                        } else if (vwbls[i].rite != -1) {
+                            toFocus = vwbls[i].rite;
+                            puts("Focusing on right");
+                        } else {
+                            puts("Focusing on root");
+                            toFocus = root;
+                        }
+                        if (toFocus != root) {
+                            printf("Refocusing on window: %d\n", vwbls[toFocus].wndw);
+                            XSetInputFocus(dsp, vwbls[toFocus].wndw, RevertToPointerRoot, CurrentTime);
+                            subw = toFocus;
+                        } else {
+                            XSetInputFocus(dsp, toFocus, RevertToPointerRoot, CurrentTime);
+                            subw = -1;
+                        }
+                    }
+
                     printf("Destroyed window: %d -> frame: %d\n", vwbls[i].wndw,
                             vwbls[i].fram);
                     XUnmapWindow(dsp, vwbls[i].fram);
                     XReparentWindow(dsp, vwbls[i].wndw, root, 0, 0);
                     XDestroyWindow(dsp, vwbls[i].fram);
                     vwbls[i].wndw = 0;
-                    vwbls[i].wndw = 0;
+                    vwbls[i].fram = 0;
+                    if (vwbls[i].botm != -1 && vwbls[vwbls[i].botm].topp == i) {
+                        vwbls[vwbls[i].botm].topp = vwbls[i].topp;
+                    }
+                    if (vwbls[i].topp != -1 && vwbls[vwbls[i].topp].botm == i) {
+                        vwbls[vwbls[i].topp].botm = vwbls[i].botm;
+                    }
+                    if (vwbls[i].left != -1 && vwbls[vwbls[i].left].rite == i) {
+                        vwbls[vwbls[i].left].rite = vwbls[i].rite;
+                    }
+                    if (vwbls[i].rite != -1 && vwbls[vwbls[i].rite].left == i) {
+                        vwbls[vwbls[i].rite].left = vwbls[i].left;
+                    }
+                    vwbls[i].botm = -1;
+                    vwbls[i].topp = -1;
+                    vwbls[i].left = -1;
+                    vwbls[i].rite = -1;
+                    filled--;
+                    printf("There are now %d windows\n", filled);
                     break;
                 }
             }
         } else if (e.type == EnterNotify) {
+            /*
             // change focus based on location of mouse
             for (int i = 0; i < MAX_WINS; i++) {
                 if (vwbls[i].wndw == e.xcrossing.subwindow ||
@@ -382,14 +516,17 @@ int main() {
             XSetInputFocus(dsp, vwbls[subw].wndw, RevertToPointerRoot, CurrentTime);
             printf("%dx%d @ %d,%d\n",
                     attrs.width, attrs.height, attrs.x, attrs.y);
+                    */
         } else if (e.type == KeyPress && e.xkey.keycode == K_e) {
             // kill the wm with a cheerful message
             puts("Gonna go die now, seeya!");
             exit(0);
-        } else if (e.type == KeyPress && vwbls[subw].wndw != None) {
+        } else if (e.type == KeyPress) {
+            puts("Handling keypresses...");
             // handle various keyboard actions
-            XGetWindowAttributes(dsp, vwbls[subw].wndw, &attrs);
-
+            if (subw != -1) {
+                XGetWindowAttributes(dsp, vwbls[subw].wndw, &attrs);
+            }
 
             // set the movement scale based on how long its been since the last keyboard event
             // may change this in the future for consistency
@@ -398,13 +535,20 @@ int main() {
             ltime = time(NULL);
 
             // get attributes about the current focused window
-            Window wndw = vwbls[subw].wndw;
-            Window fram = vwbls[subw].fram;
-            printf("Got keypress from window: %d/frame: %d\n", wndw, fram);
+            Window wndw;
+            Window fram;
             XWindowAttributes wndwAttrs;
             XWindowAttributes framAttrs;
-            XGetWindowAttributes(dsp, wndw, &wndwAttrs);
-            XGetWindowAttributes(dsp, fram, &framAttrs);
+
+            if (subw != -1) {
+                wndw = vwbls[subw].wndw;
+                fram = vwbls[subw].fram;
+                printf("Got keypress from window: %d/frame: %d\n", wndw, fram);
+                XGetWindowAttributes(dsp, wndw, &wndwAttrs);
+                XGetWindowAttributes(dsp, fram, &framAttrs);
+            } else {
+                puts("Got keypress from root");
+            }
 
             printf("%d\n", e.xkey.state);
 
@@ -501,6 +645,10 @@ int main() {
             } else if (Kp == K_d) {
                 // start dmenu
                 start_external("dmenu_run");
+            } else if (Kp == K_b) {
+                tilingVertically = false;
+            } else if (Kp == K_v) {
+                tilingVertically = true;
             } else if (Kp == K_q) {
                 // kill the window in the best way possible
 
